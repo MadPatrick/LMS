@@ -1,4 +1,4 @@
-# 🎵 Logitech Media Server Plugin (Extended)
+# 🎵 Lyrion Media Server Plugin (Extended)
 
 This plugin provides full integration between **Lyrion Media Server (LMS)** and **Domoticz**.  
 The plugin has been fully rewritten, extended, tested, and is stable on Domoticz 2024+.

@@ -51,12 +51,12 @@ class LMSPlugin:
         self.debug = False
 
     def onStart(self):
-        Domoticz.Log("LMS plugin started (v1.5.0.")
+        Domoticz.Log("LMS plugin started (v1.5.0).")
 
         _IMAGE = "lms"
 
         if _IMAGE not in Images:
-            Domoticz.Log(f"LMS icons not found, loading { _IMAGE }.zip ...")
+            Domoticz.Log(f"LMS icons not found, loading {_IMAGE}.zip ...")
             Domoticz.Image(f"{_IMAGE}.zip").Create()
 
         if _IMAGE in Images:
@@ -161,6 +161,7 @@ class LMSPlugin:
             Type=244,
             Subtype=73,
             Switchtype=7,
+            Image=5,
             Description=mac,
             Used=1
         ).Create()
@@ -304,6 +305,7 @@ class LMSPlugin:
         pl = self.playlists[idx]
         playlist_name = pl["playlist"]
 
+        # Duidelijke logregel:
         Domoticz.Log(f"Playlist selected: {playlist_name}")
 
         self.start_playlist_on_first_player(playlist_name)
@@ -403,7 +405,7 @@ class LMSPlugin:
                     if self.debug:
                         Domoticz.Log(f"DEBUG: Volume updated from LMS: {mixer_vol}")
 
-            # ----- TEXT / TITLE / ARTIST / ALBUM -----
+            # ----- TEXT / TITLE / ARTIST -----
             if text in Devices:
                 dev_text = Devices[text]
 
@@ -433,9 +435,11 @@ class LMSPlugin:
                 if power == 0:
                     label = " "
                 elif mode == "play":
-                    label = title
+                    # Artiest – Titel (zonder album)
                     if artist:
-                        label += f" - {artist}"
+                        label = f"{artist} - {title}"
+                    else:
+                        label = title
                 elif mode == "pause":
                     label = title
                 else:
@@ -482,8 +486,9 @@ class LMSPlugin:
         if self.debug:
             Domoticz.Log(f"DEBUG onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}")
 
+        # Playlist selector
         if Unit == PLAYLISTS_DEVICE_UNIT and Command == "Set Level":
-            Domoticz.Log(f"Playlist selector level: {Level}")
+            # Geen technische level-log meer, alleen nette selectie-log in play_playlist_by_level
             self.play_playlist_by_level(Level)
             return
 

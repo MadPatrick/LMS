@@ -55,3 +55,4 @@ cd /home/<user>/domoticz/plugins
 git clone https://github.com/MadPatrick/domoticz_LMS.git
 sudo systemctl restart domoticz
 
+https://github.com/MadPatrick/domoticz_Lyrion

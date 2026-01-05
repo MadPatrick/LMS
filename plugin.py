@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.7" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.0.9" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
-        <h2>Lyrion Music Server Plugin - Extended</h2>
-        <p>Version 2.0.7</p>
+        <h2><br/>Lyrion Music Server Plugin</h2>
+        <p>Version 2.0.9</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -14,24 +14,31 @@
             <li>Shuffle (Selector)</li>
             <li>Repeat (Selector)</li>
         </ul>
-        <p><strong>Nieuw in 2.0.7:</strong> Vriendelijke server offline/online meldingen (slechts 1x per statuswijziging)</p>
+        <br/><span style="font-weight: bold;">Lyrion Server settings</span>
     </description>
-
     <params>
         <param field="Address" label="Server IP" width="200px" required="true" default="192.168.1.6"/>
         <param field="Port" label="Port" width="100px" required="true" default="9000"/>
-        <param field="Username" label="Username" width="150px"/>
-        <param field="Password" label="Password" width="150px" password="true"/>
-        <param field="Mode1" label="Polling interval (sec)" width="150px" default="20">
+        <param field="Username" label="Username" width="150px">
+            <description>
+                <br/><span style="color: yellow;">Login settings. Only when needed when applicable</span>
+            </description>
+        </param>
+        <param field="Password" label="Password" width="150px" password="true">
+        </param>
+        <param field="Mode1" label="Polling interval (sec)" width="100px" default="10">
+            <description>
+                <br/>
+            </description>
             <options>
                 <option label="20 sec" value="20"/>
                 <option label="5 sec" value="5"/>
-                <option label="10 sec" value="10"/>
+                <option label="10 sec" value="10" default="10"/>
                 <option label="30 sec" value="30"/>
                 <option label="60 sec" value="60"/>
             </options>
         </param>
-        <param field="Mode2" label="Max playlists to expose" width="100px" default="5"/>
+        <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
         <param field="Mode3" label="Debug logging" width="100px" default="No">
             <options>
                 <option label="No" value="False"/>
@@ -46,7 +53,6 @@
 import Domoticz
 import requests
 import time
-
 
 class LMSPlugin:
     def __init__(self):
@@ -77,11 +83,22 @@ class LMSPlugin:
         # Nieuwe variabelen voor server-status tracking
         self.server_was_online = None   # None = nog niet bekend, daarna True/False
 
+        self.last_success = 0
+        self.offline_grace = 15  # seconden
+
+
     # ------------------------------------------------------------------
     # Small helpers
     # ------------------------------------------------------------------
     def log(self, msg):
         Domoticz.Log(msg)
+
+    def log_player(self, dev, action):
+        if not dev:
+            name = "Unknown"
+        else:
+            name = dev.Name.replace(" Control", "")  # verwijdert suffix Control
+        self.log(f"{name} | {action}")
 
     def debug_log(self, msg):
         if self.debug:
@@ -128,7 +145,7 @@ class LMSPlugin:
         pwd = Parameters.get("Password", "")
         self.auth = (user, pwd) if user else None
 
-        Domoticz.Heartbeat(10)
+        Domoticz.Heartbeat(5)
         self.nextPoll = time.time() + 10
 
     def onStop(self):
@@ -148,23 +165,25 @@ class LMSPlugin:
             r = requests.post(self.url, json=data, auth=self.auth, timeout=10)
             r.raise_for_status()
             result = r.json().get("result")
-            self.debug_log(f"Query: player={player}, cmd={cmd_array}, result={result}")
 
-            # Server bereikbaar ? status bijwerken
+            self.last_success = time.time()
+
             if self.server_was_online is not True:
                 if self.server_was_online is False:
-                    self.log("Lyrion server is back ONLINE.")
+                    self.log("Lyrion Music Server is back ONLINE.")
                 self.server_was_online = True
+
             return result
 
         except Exception as e:
-            # Server niet bereikbaar ? status bijwerken (maar niet spammen)
-            if self.server_was_online is not False:
-                if self.server_was_online is True:
-                    self.log("Lyrion server is OFFLINE")
-                self.server_was_online = False
+            now = time.time()
 
-            # Technische details alleen bij debug
+            # pas offline melden als grace period verstreken is
+            if self.server_was_online is not False:
+                if now - self.last_success > self.offline_grace:
+                    self.log("Lyrion Music Server is OFFLINE")
+                    self.server_was_online = False
+
             self.debug_log(f"LMS query failed: {e}")
             return None
 
@@ -539,7 +558,7 @@ class LMSPlugin:
                 level = shuffle_state * 10
                 if dev_shuffle.sValue != str(level):
                     mode_name = {0: "Off", 1: "Songs", 2: "Albums"}.get(shuffle_state, shuffle_state)
-                    Domoticz.Log(f"Shuffle changed to : {mode_name}")
+                    self.log_player(dev_shuffle, f"Shuffle {mode_name}")
                     dev_shuffle.Update(nValue=0, sValue=str(level))
 
             if repeat in Devices:
@@ -551,7 +570,7 @@ class LMSPlugin:
                 level = repeat_state * 10
                 if dev_repeat.sValue != str(level):
                     mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(repeat_state, repeat_state)
-                    Domoticz.Log(f"Repeat changed to : {mode_name}")
+                    self.log_player(dev, f"Repeat {mode_name}")
                     dev_repeat.Update(nValue=0, sValue=str(level))
 
             player_pl = self.get_player_playlists(mac)
@@ -612,7 +631,7 @@ class LMSPlugin:
             nval = 1 if mode > 0 else 0
             dev.Update(nValue=nval, sValue=str(Level))
             mode_name = {0: "Off", 1: "Songs", 2: "Albums"}.get(mode, f"Unknown ({mode})")
-            Domoticz.Log(f"Shuffle set to : {mode_name}")
+            self.log_player(dev, f"Shuffle {mode_name}")
             return
 
         if "Repeat" in devname:
@@ -628,7 +647,7 @@ class LMSPlugin:
             nval = 1 if mode > 0 else 0
             dev.Update(nValue=nval, sValue=str(Level))
             mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
-            Domoticz.Log(f"Repeat set to : {mode_name}")
+            self.log_player(dev_repeat, f"Repeat {mode_name}")
             return
 
         if Command in ["On", "Off"] and self.is_main_device_name(devname):
@@ -653,7 +672,7 @@ class LMSPlugin:
                 return
             self.send_display_text(mac, self.displayText)
             dev.Update(nValue=1, sValue=str(Level))
-            self.log(f"SendText sent to: {mac}")
+            self.log_player(dev, "SendText")
             return
 
         if Level == 20:
@@ -675,7 +694,7 @@ class LMSPlugin:
             return
 
         if Level == 30:
-            self.log(f"Unsyncing player: {mac}")
+            self.log_player(dev, "Unsync")
             self.send_playercmd(mac, ["sync", "-"])
             dev.Update(nValue=1, sValue=str(Level))
             return
@@ -683,12 +702,12 @@ class LMSPlugin:
     def handle_power(self, dev, mac, Command):
         self.send_playercmd(mac, ["power", "1" if Command == "On" else "0"])
         dev.Update(nValue=1 if Command == "On" else 0, sValue="")
-        self.log(f"Power {Command}")
+        self.log_player(dev, f"Power {Command}")
 
     def handle_volume(self, dev, mac, Level):
         self.send_playercmd(mac, ["mixer", "volume", str(Level)])
         dev.Update(nValue=1 if Level > 0 else 0, sValue=str(Level))
-        self.log(f"Volume set to {Level}%")
+        self.log_player(dev, f"Volume {Level}%")
 
     def handle_main_playback(self, dev, mac, Level):
         btn_map = {
@@ -701,7 +720,7 @@ class LMSPlugin:
         cmd, label = btn_map[Level]
         self.send_button(mac, cmd)
         dev.Update(nValue=1, sValue=str(Level))
-        self.log(f"Player command: {label}")
+        self.log_player(dev, label)
 
 
 # -------------------------------------------------------------------

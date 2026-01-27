@@ -260,10 +260,8 @@ class LMSPlugin:
         Domoticz.Device(
             Name=f"{base} Volume",
             Unit=unit + 1,
-            Type=244,
-            Subtype=73,
-            Switchtype=7,
-            Image=5,
+            TypeName="Dimmer",
+            Image=self.imageID,
             Description=mac,
             Used=1,
         ).Create()
@@ -584,7 +582,8 @@ class LMSPlugin:
                 level = repeat_state * 10
                 if dev_repeat.sValue != str(level):
                     mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(repeat_state, repeat_state)
-                    self.log_player(dev, f"Repeat {mode_name}")
+                    # VERANDER 'dev' IN 'dev_repeat' HIERONDER:
+                    self.log_player(dev_repeat, f"Repeat {mode_name}") 
                     dev_repeat.Update(nValue=0, sValue=str(level))
 
             player_pl = self.get_player_playlists(mac)
@@ -656,6 +655,14 @@ class LMSPlugin:
                 Level = 0
             else:
                 return
+
+            self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
+            nval = 1 if mode > 0 else 0
+            dev.Update(nValue=nval, sValue=str(Level))
+            mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
+            # Correctie: dev gebruiken in plaats van dev_repeat
+            self.log_player(dev, f"Repeat {mode_name}")
+            return
 
             self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             nval = 1 if mode > 0 else 0

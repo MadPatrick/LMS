@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.1.9" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.1.9</p>
+        <p>Version 2.2.0</p>
         <p>Detects players, creates devices, and provides:</p>
         <ul>
             <li>Power / Play / Pause / Stop</li>
@@ -56,6 +56,7 @@
             <option label="10 min" value="10" default="true"/>
             <option label="30 min" value="30"/>
             <option label="60 min" value="60"/>
+            <option label="240 min" value="240"/>
         </options>
         </param>
         <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
@@ -102,6 +103,9 @@ class LMSPlugin:
 
         # Logging / init
         self.initialized = False
+
+        # Track device text limit (characters per field: station, artist, title)
+        self.track_max_chars = 25
 
         # Track-change detection
         self.lastTrackIndex = {}
@@ -830,13 +834,14 @@ class LMSPlugin:
                         if not title:
                             title = current_title
 
+                    n = self.track_max_chars
                     lines = []
                     if station:
-                        lines.append(f"&#128251; <b><span style='color:#969696;'>{station}</span></b>")
+                        lines.append(f"&#128251; <b><span style='color:#969696;'>{station[:n]}</span></b>")
                     if artist:
-                        lines.append(f"&#127908; <span style='color:#FFD700;'>{artist}</span>")
+                        lines.append(f"&#127908; <span style='color:#FFD700;'>{artist[:n]}</span>")
                     if title and title != station:
-                        lines.append(f"&#127925; <span style='color:#FFA500 !important;'>{title}</span>")
+                        lines.append(f"&#127925; <span style='color:#FFA500 !important;'>{title[:n]}</span>")
 
                     label = "<br>".join(lines) if lines else " "
                     label = label[:255]

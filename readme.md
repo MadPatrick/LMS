@@ -1,7 +1,7 @@
 # 🎵 Lyrion Music Server Plugin (Extended)
 ![Status](https://img.shields.io/badge/Status-Stable-brightgreen)
-![Domoticz](https://img.shields.io/badge/Domoticz-2022%2B-blue)
-![Python](https://img.shields.io/badge/Python-3.7+-yellow)
+![Domoticz](https://img.shields.io/badge/Domoticz-2024%2B-blue)
+![Python](https://img.shields.io/badge/Python-3.x-yellow)
 ![License](https://img.shields.io/badge/License-MIT-lightgrey)
 
 This plugin provides full integration between **Lyrion Music Server (LMS)** and **Domoticz**.  
@@ -52,6 +52,25 @@ The plugin has been fully rewritten, extended, tested, and is stable on Domoticz
 
 ## 📦 Installation
 
+### Prerequisites
+
+1. Domoticz 2024+ with Python plugin support enabled.
+2. Python 3 with the matching Python development package for your system.
+3. Install the required Python library:
+
+```bash
+sudo apt-get update
+sudo apt-get install python3 python3-dev python3-requests
+```
+
+Or install the Python dependency with pip:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+`Domoticz` is provided by Domoticz and is not a pip dependency.
+
 Clone the plugin into the Domoticz plugin folder:
 
 ```bash
@@ -59,3 +78,4 @@ cd /home/<user>/domoticz/plugins
 git clone https://github.com/MadPatrick/domoticz_Lyrion.git lyrion
 sudo systemctl restart domoticz
 
+```

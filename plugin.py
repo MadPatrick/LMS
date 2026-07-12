@@ -1,21 +1,19 @@
 """
 <plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
-        <h2><br/>Lyrion Music Server Plugin</h2>
-        <p>Version 2.2.0</p>
-        <p>Detects players, creates devices, and provides:</p>
+        <h2>Lyrion Music Server</h2>
+        <p><strong>Version:</strong> 2.2.0</p>
+        <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
+        <h3>Features</h3>
         <ul>
-            <li>Power / Play / Pause / Stop</li>
-            <li>Volume (Dimmer)</li>
-            <li>Track info (Text)</li>
-            <li>Playlists (Selector) - per player (player-specific list)</li>
-            <li>Sync / Unsync</li>
-            <li>Favorites (Selector)</li>
-            <li>Display text (via Actions device)</li>
-            <li>Shuffle (Selector)</li>
-            <li>Repeat (Selector)</li>
+            <li>Power, play, pause, stop and volume controls.</li>
+            <li>Current station, artist and track information.</li>
+            <li>Per-player playlists and global favorites selectors.</li>
+            <li>Sync, unsync, shuffle and repeat controls.</li>
+            <li>Sends configurable text to compatible player displays.</li>
         </ul>
-        <br/><span style="font-weight: bold;">Lyrion Server settings</span>
+        <h3>Configuration</h3>
+        <p>Enter the server connection details. Username and password are only required when authentication is enabled.</p>
     </description>
     <params>
         <param field="Address" label="Server IP" width="200px" required="true" default="192.168.1.6"/>
@@ -27,7 +25,7 @@
         </param>
         <param field="Password" label="Password" width="150px" password="true">
         </param>
-        <param field="Mode1" label="Polling interval (On)" width="100px" default="10">
+        <param field="Mode1" label="Active polling interval" width="100px" default="10">
             <description>
                 <br/>
             </description>
@@ -40,7 +38,7 @@
                 <option label="600 sec" value="600"/>
             </options>
         </param>
-        <param field="Mode5" label="Polling interval (Off)" width="100px" default="600">
+        <param field="Mode5" label="Inactive polling interval" width="100px" default="600">
             <options>
             <option label=" 1 min" value="60"/>
             <option label=" 5 min" value="300"/>
@@ -49,7 +47,7 @@
             <option label="60 min" value="3600"/>
         </options>
         </param>
-        <param field="Mode6" label="Polling interval (lists)" width="100px" default="10">
+        <param field="Mode6" label="List refresh interval" width="100px" default="10">
             <options>
             <option label="1 min" value="1"/>
             <option label="5 min" value="5"/>

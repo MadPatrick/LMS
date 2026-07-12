@@ -152,24 +152,36 @@ class LMSPlugin:
     def is_main_device_name(name: str) -> bool:
         return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
 
+    def _load_device_icon(self):
+        _IMAGE = "LMS"
+        creating_new_icon = _IMAGE not in Images
+        try:
+            Domoticz.Image(f"{_IMAGE}.zip").Create()
+        except Exception as e:
+            self.error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
+            return
+        if _IMAGE in Images:
+            self.imageID = Images[_IMAGE].ID
+            self.log("Icons created and loaded." if creating_new_icon else
+                     f"Icons found in database (ImageID={self.imageID}).")
+        else:
+            self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
+
+    def _apply_device_icon(self):
+        if not self.imageID:
+            return
+        for device in Devices.values():
+            if device.Image != self.imageID:
+                device.Update(nValue=device.nValue, sValue=device.sValue, Image=self.imageID)
+
     # ------------------------------------------------------------------
     # Domoticz lifecycle
     # ------------------------------------------------------------------
     def onStart(self):
         self.log(f"Starting Plugin version {Parameters['Version']}")
 
-        _IMAGE = "LMS"
-        creating_new_icon = _IMAGE not in Images
-        Domoticz.Image(f"{_IMAGE}.zip").Create()
-
-        if _IMAGE in Images:
-            self.imageID = Images[_IMAGE].ID
-            if creating_new_icon:
-                self.log("Icons created and loaded.")
-            else:
-                self.log(f"Icons found in database (ImageID={self.imageID}).")
-        else:
-            self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
+        self._load_device_icon()
+        self._apply_device_icon()
 
         # Poll interval (Mode1)
         try:

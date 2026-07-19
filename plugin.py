@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.1" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server</h2>
-        <p><strong>Version:</strong> 2.2.0</p>
+        <p><strong>Version:</strong> 2.2.1</p>
         <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
         <h3>Features</h3>
         <ul>
@@ -152,16 +152,29 @@ class LMSPlugin:
 
     def _load_device_icon(self):
         _IMAGE = "LMS"
-        creating_new_icon = _IMAGE not in Images
+        existing_image = next(
+            (image for name, image in Images.items()
+             if str(name).casefold() == _IMAGE.casefold()),
+            None,
+        )
+        if existing_image is not None:
+            self.imageID = existing_image.ID
+            self.log(f"Icons found in database (ImageID={self.imageID}).")
+            return
+
         try:
             Domoticz.Image(f"{_IMAGE}.zip").Create()
         except Exception as e:
             self.error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
             return
-        if _IMAGE in Images:
-            self.imageID = Images[_IMAGE].ID
-            self.log("Icons created and loaded." if creating_new_icon else
-                     f"Icons found in database (ImageID={self.imageID}).")
+        created_image = next(
+            (image for name, image in Images.items()
+             if str(name).casefold() == _IMAGE.casefold()),
+            None,
+        )
+        if created_image is not None:
+            self.imageID = created_image.ID
+            self.log("Icons created and loaded.")
         else:
             self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
 

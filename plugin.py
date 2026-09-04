@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.1" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.2" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server</h2>
-        <p><strong>Version:</strong> 2.2.1</p>
+        <p><strong>Version:</strong> 2.2.2</p>
         <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
         <h3>Features</h3>
         <ul>
@@ -126,6 +126,12 @@ class LMSPlugin:
         # Flag of er een actieve speler is (play/pause)
         self.any_active = False
 
+        # Stable Unit -> device "kind" mapping (e.g. "volume", "shuffle", ...),
+        # rebuilt every poll from find_player_devices() (which matches on the
+        # immutable Device.Description/mac pairing). Used by onCommand so
+        # command routing does not depend on the user-editable Device.Name.
+        self.unit_kind = {}
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -149,6 +155,26 @@ class LMSPlugin:
     @staticmethod
     def is_main_device_name(name: str) -> bool:
         return not any(x in name for x in ("Volume", "Track", "Actions", "Shuffle", "Repeat", "Playlists", "Favorites"))
+
+    def kind_from_name_fallback(self, name: str):
+        """Best-effort device 'kind' guess from Device.Name. Only used as a
+        fallback when self.unit_kind has no entry for the Unit yet (e.g. a
+        command arrives before the first poll has populated the map)."""
+        if "Favorites" in name:
+            return "favorites"
+        if "Playlists" in name:
+            return "playlists"
+        if "Actions" in name:
+            return "actions"
+        if "Shuffle" in name:
+            return "shuffle"
+        if "Repeat" in name:
+            return "repeat"
+        if "Volume" in name:
+            return "volume"
+        if self.is_main_device_name(name):
+            return "main"
+        return None
 
     def _load_device_icon(self):
         _IMAGE = "LMS"
@@ -784,6 +810,16 @@ class LMSPlugin:
                 continue
 
             main, vol, text, actions, shuffle, repeat, plsel, favsel = devices
+
+            # Keep the stable Unit -> kind mapping fresh (Description/mac is
+            # the immutable identifier find_player_devices matches on).
+            for kind_name, unit_id in (
+                ("main", main), ("volume", vol), ("track", text), ("actions", actions),
+                ("shuffle", shuffle), ("repeat", repeat), ("playlists", plsel), ("favorites", favsel),
+            ):
+                if unit_id is not None:
+                    self.unit_kind[unit_id] = kind_name
+
             st = self.get_status(mac) or {}
 
             power = int(st.get("power", 0))
@@ -810,9 +846,16 @@ class LMSPlugin:
                 dev_vol = Devices[vol]
                 raw = st.get("mixer volume", 0)
                 try:
-                    new_sval = str(int(float(str(raw).replace("%", ""))))
+                    parsed_vol = int(float(str(raw).replace("%", "")))
                 except Exception:
-                    new_sval = "0"
+                    parsed_vol = 0
+
+                # LMS reports a negative "mixer volume" when the player is
+                # muted (e.g. -25 means "muted, was at 25"). A Domoticz
+                # Dimmer's sValue must be 0-100, so represent a muted player
+                # as volume 0 instead of writing a negative, out-of-range
+                # value.
+                new_sval = "0" if parsed_vol < 0 else str(parsed_vol)
 
                 if dev_vol.sValue != new_sval:
                     self.log(f"Volume changed to : {new_sval}%")
@@ -947,9 +990,16 @@ class LMSPlugin:
             self.error(f"No MAC address for device {Unit} ('{devname}'), command ignored.")
             return
 
-        self.debug_log(f"onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}")
+        # Route on the stable Unit -> kind mapping (built from the immutable
+        # Device.Description/mac pairing in updateEverything) rather than on
+        # Device.Name, which a Domoticz user can freely rename in the UI.
+        kind = self.unit_kind.get(Unit)
+        if kind is None:
+            kind = self.kind_from_name_fallback(devname)
 
-        if "Favorites" in devname and Command == "Set Level":
+        self.debug_log(f"onCommand: Unit={Unit}, Name={devname}, Command={Command}, Level={Level}, mac={mac}, kind={kind}")
+
+        if kind == "favorites" and Command == "Set Level":
             if Level == 0:
                 dev.Update(nValue=0, sValue="0")
                 return
@@ -961,25 +1011,28 @@ class LMSPlugin:
             if 0 <= idx < len(favorites):
                 fav = favorites[idx]
                 fav_id = fav["id"]
-                self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
-                self.log(f"Playing Favorite: {fav['name']}")
-                dev.Update(nValue=1, sValue=svalue, Options=dev.Options)
+                result = self.send_playercmd(mac, ["favorites", "playlist", "play", f"item_id:{fav_id}"])
+                if result is not None:
+                    self.log(f"Playing Favorite: {fav['name']}")
+                    dev.Update(nValue=1, sValue=svalue, Options=dev.Options)
+                else:
+                    self.error(f"Failed to play Favorite '{fav['name']}' on {mac}.")
 
             self.nextPoll = time.time() + 1
             return
 
-        if "Playlists" in devname and Command == "Set Level":
+        if kind == "playlists" and Command == "Set Level":
             if Level == 0:
                 dev.Update(nValue=0, sValue="0")
                 return
             self.play_playlist_for_player(mac, Level)
             return
 
-        if "Actions" in devname and Command == "Set Level":
+        if kind == "actions" and Command == "Set Level":
             self.handle_actions(dev, mac, Level)
             return
 
-        if "Shuffle" in devname:
+        if kind == "shuffle":
             if Command == "Set Level":
                 mode = int(Level // 10)
             elif Command == "Off":
@@ -988,14 +1041,17 @@ class LMSPlugin:
             else:
                 return
 
-            self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
-            nval = 1 if mode > 0 else 0
-            dev.Update(nValue=nval, sValue=str(Level))
+            result = self.send_playercmd(mac, ["playlist", "shuffle", str(mode)])
             mode_name = {0: "Off", 1: "Songs", 2: "Albums"}.get(mode, f"Unknown ({mode})")
-            self.log_player(dev, f"Shuffle {mode_name}")
+            if result is not None:
+                nval = 1 if mode > 0 else 0
+                dev.Update(nValue=nval, sValue=str(Level))
+                self.log_player(dev, f"Shuffle {mode_name}")
+            else:
+                self.error(f"Failed to set Shuffle {mode_name} on {mac}.")
             return
 
-        if "Repeat" in devname:
+        if kind == "repeat":
             if Command == "Set Level":
                 cmd_map = {0: 0, 10: 2, 20: 1}
                 mode = cmd_map.get(Level, 0)
@@ -1005,23 +1061,25 @@ class LMSPlugin:
             else:
                 return
 
-            self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
-            nval = 1 if mode > 0 else 0
-            dev.Update(nValue=nval, sValue=str(Level))
-
+            result = self.send_playercmd(mac, ["playlist", "repeat", str(mode)])
             mode_name = {0: "Off", 1: "Track", 2: "Playlist"}.get(mode, f"Unknown ({mode})")
-            self.log_player(dev, f"Repeat set to {mode_name}")
+            if result is not None:
+                nval = 1 if mode > 0 else 0
+                dev.Update(nValue=nval, sValue=str(Level))
+                self.log_player(dev, f"Repeat set to {mode_name}")
+            else:
+                self.error(f"Failed to set Repeat {mode_name} on {mac}.")
             return
 
-        if Command in ["On", "Off"] and self.is_main_device_name(devname):
+        if Command in ["On", "Off"] and kind == "main":
             self.handle_power(dev, mac, Command)
             return
 
-        if "Volume" in devname and Command == "Set Level":
+        if kind == "volume" and Command == "Set Level":
             self.handle_volume(dev, mac, Level)
             return
 
-        if Command == "Set Level" and self.is_main_device_name(devname):
+        if Command == "Set Level" and kind == "main":
             self.handle_main_playback(dev, mac, Level)
             return
 
@@ -1029,9 +1087,12 @@ class LMSPlugin:
     # Command helpers
     # ------------------------------------------------------------------
     def handle_volume(self, dev, mac, Level):
-        self.send_playercmd(mac, ["mixer", "volume", str(Level)])
-        dev.Update(nValue=2 if Level > 0 else 0, sValue=str(Level))
-        self.log_player(dev, f"Volume {Level}%")
+        result = self.send_playercmd(mac, ["mixer", "volume", str(Level)])
+        if result is not None:
+            dev.Update(nValue=2 if Level > 0 else 0, sValue=str(Level))
+            self.log_player(dev, f"Volume {Level}%")
+        else:
+            self.error(f"Failed to set Volume {Level}% on {mac}.")
 
     def handle_actions(self, dev, mac, Level):
         if Level == 10:
@@ -1070,37 +1131,55 @@ class LMSPlugin:
 
     def handle_power(self, dev, mac, Command):
         if Command == "On":
-            self.send_playercmd(mac, ["power", "1"])
-            dev.Update(nValue=1, sValue=dev.sValue)
-            self.log_player(dev, "Power On")
+            result = self.send_playercmd(mac, ["power", "1"])
+            if result is not None:
+                dev.Update(nValue=1, sValue=dev.sValue)
+                self.log_player(dev, "Power On")
+            else:
+                self.error(f"Failed to power On {mac}.")
         elif Command == "Off":
-            self.send_playercmd(mac, ["power", "0"])
-            dev.Update(nValue=0, sValue="0")
-            self.log_player(dev, "Power Off")
+            result = self.send_playercmd(mac, ["power", "0"])
+            if result is not None:
+                dev.Update(nValue=0, sValue="0")
+                self.log_player(dev, "Power Off")
+            else:
+                self.error(f"Failed to power Off {mac}.")
 
     def handle_main_playback(self, dev, mac, Level):
         if Level == 0:
-            self.send_playercmd(mac, ["power", "0"])
-            dev.Update(nValue=0, sValue="0")
-            self.log_player(dev, "Power Off")
+            result = self.send_playercmd(mac, ["power", "0"])
+            if result is not None:
+                dev.Update(nValue=0, sValue="0")
+                self.log_player(dev, "Power Off")
+            else:
+                self.error(f"Failed to power Off {mac}.")
             return
 
         if Level == 10:
-            self.send_playercmd(mac, ["pause", "1"])
-            dev.Update(nValue=1, sValue="10")
-            self.log_player(dev, "Pause")
+            result = self.send_playercmd(mac, ["pause", "1"])
+            if result is not None:
+                dev.Update(nValue=1, sValue="10")
+                self.log_player(dev, "Pause")
+            else:
+                self.error(f"Failed to Pause {mac}.")
             return
 
         if Level == 20:
-            self.send_playercmd(mac, ["play"])
-            dev.Update(nValue=1, sValue="20")
-            self.log_player(dev, "Play")
+            result = self.send_playercmd(mac, ["play"])
+            if result is not None:
+                dev.Update(nValue=1, sValue="20")
+                self.log_player(dev, "Play")
+            else:
+                self.error(f"Failed to Play {mac}.")
             return
 
         if Level == 30:
-            self.send_playercmd(mac, ["stop"])
-            dev.Update(nValue=1, sValue="30")
-            self.log_player(dev, "Stop")
+            result = self.send_playercmd(mac, ["stop"])
+            if result is not None:
+                dev.Update(nValue=1, sValue="30")
+                self.log_player(dev, "Stop")
+            else:
+                self.error(f"Failed to Stop {mac}.")
             return
 
 

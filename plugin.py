@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.2" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.3" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server</h2>
-        <p><strong>Version:</strong> 2.2.2</p>
+        <p><strong>Version:</strong> 2.2.3</p>
         <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
         <h3>Features</h3>
         <ul>
@@ -16,7 +16,12 @@
         <p>Enter the server connection details. Username and password are only required when authentication is enabled.</p>
     </description>
     <params>
-        <param field="Address" label="Server IP" width="200px" required="true" default="192.168.1.6"/>
+        <param field="Address" label="Server IP" width="200px" required="true" default="192.168.1.6">
+            <description>
+                <br/>Plain IP/hostname connects over plain HTTP using the Port field below.
+                <br/>To connect over HTTPS (e.g. through a reverse proxy in front of LMS) enter a full URL instead, for example <i>https://lms.example.com:9443</i> - the Port field is then ignored.
+            </description>
+        </param>
         <param field="Port" label="Port" width="100px" required="true" default="9000"/>
         <param field="Username" label="Username" width="150px">
             <description>
@@ -74,6 +79,8 @@ import Domoticz
 import requests
 import time
 import re
+import threading
+import queue
 
 
 class LMSPlugin:
@@ -131,6 +138,15 @@ class LMSPlugin:
         # immutable Device.Description/mac pairing). Used by onCommand so
         # command routing does not depend on the user-editable Device.Name.
         self.unit_kind = {}
+
+        # updateEverything's fetch cycle (serverstatus + per-player status/lists)
+        # runs on a background thread so a slow/unreachable server never blocks
+        # Domoticz's single callback thread. The worker only calls the LMS query
+        # helpers (which never touch Devices); all Devices[...] updates happen
+        # in _processEverything(), on the main thread, from onHeartbeat.
+        self._fetch_lock = threading.Lock()
+        self._fetch_in_progress = False
+        self._result_queue = queue.Queue()
 
     # ------------------------------------------------------------------
     # Helpers
@@ -270,7 +286,13 @@ class LMSPlugin:
         self.log("Starting initialization ...... Please wait")
 
         # Server URL + Auth
-        self.url = f"http://{Parameters['Address']}:{Parameters['Port']}/jsonrpc.js"
+        address = Parameters['Address'].strip()
+        if '://' in address:
+            # Full URL (e.g. https://... through a reverse proxy) - use as-is,
+            # Port field is not appended since the URL already specifies one.
+            self.url = f"{address.rstrip('/')}/jsonrpc.js"
+        else:
+            self.url = f"http://{address}:{Parameters['Port']}/jsonrpc.js"
         user = Parameters.get("Username", "")
         pwd = Parameters.get("Password", "")
         self.auth = (user, pwd) if user else None
@@ -286,17 +308,70 @@ class LMSPlugin:
             pass
 
     def onHeartbeat(self):
+        # Process any fetch cycle(s) the background worker finished since the
+        # last tick - main/callback thread, safe here to touch Devices[...].
+        while True:
+            try:
+                bundle = self._result_queue.get_nowait()
+            except queue.Empty:
+                break
+            self._processEverything(bundle)
+
         now = time.time()
         if now < self.nextPoll:
             return
 
-        self.updateEverything()
+        self._triggerFetchEverything()
 
+        # any_active reflects the previous completed cycle (the current one is
+        # still in flight on the worker thread) - a one-cycle lag is an
+        # acceptable trade-off for not blocking here to get a fresh value.
         active = self.any_active
         interval = self.pollInterval if active else self.offlinePollInterval
 
         self.debug_log(f"Heartbeat done, active={active}, next poll in {interval}s")
         self.nextPoll = now + interval
+
+    def _triggerFetchEverything(self):
+        """Starts the background worker for one polling cycle. Runs on the main
+        thread; only starts a thread and returns immediately."""
+        with self._fetch_lock:
+            if self._fetch_in_progress:
+                self.debug_log("Fetch already in progress, skipping this heartbeat trigger.")
+                return
+            self._fetch_in_progress = True
+
+        threading.Thread(target=self._fetchEverythingWorker, daemon=True).start()
+
+    def _fetchEverythingWorker(self):
+        """Runs on a background thread. Does ONLY the blocking LMS queries
+        (get_serverstatus/get_status/get_cached_playlists/get_cached_favorites -
+        none of which touch Devices) and hands raw results back through
+        self._result_queue. Devices[...] creation/updates happen in
+        _processEverything(), on the main thread, afterwards."""
+        bundle = {"status": {}, "playlists": {}}
+        try:
+            server = self.get_serverstatus()
+            bundle["server"] = server
+            players = (server.get("players_loop", []) or []) if server else []
+            bundle["players"] = players
+
+            for p in players:
+                mac = p.get("playerid")
+                if not mac:
+                    continue
+                bundle["status"][mac] = self.get_status(mac) or {}
+                # Fetched unconditionally here (cheap once cached - see
+                # get_cached_playlists) since the worker thread can't check
+                # whether a player's Playlists selector device exists yet;
+                # _processEverything() still only uses/shows it when relevant.
+                bundle["playlists"][mac] = self.get_cached_playlists(mac)
+
+            bundle["favorites"] = self.get_cached_favorites()
+        finally:
+            self._result_queue.put(bundle)
+            with self._fetch_lock:
+                self._fetch_in_progress = False
 
     # ------------------------------------------------------------------
     # LMS JSON helper
@@ -764,13 +839,17 @@ class LMSPlugin:
     # ------------------------------------------------------------------
     # MAIN UPDATE LOOP
     # ------------------------------------------------------------------
-    def updateEverything(self):
-        server = self.get_serverstatus()
+    def _processEverything(self, bundle):
+        """Devices[...]-touching part of one polling cycle, given the raw data
+        already fetched by _fetchEverythingWorker(). Safe to call from the
+        main thread only. Mirrors the original (synchronous) updateEverything
+        exactly, just reading pre-fetched data instead of querying LMS itself."""
+        server = bundle.get("server")
         if not server:
             self.any_active = False
             return
 
-        self.players = server.get("players_loop", []) or []
+        self.players = bundle.get("players", [])
 
         # LMS update melding
         update_msg = server.get("newversion", "")
@@ -820,7 +899,7 @@ class LMSPlugin:
                 if unit_id is not None:
                     self.unit_kind[unit_id] = kind_name
 
-            st = self.get_status(mac) or {}
+            st = bundle.get("status", {}).get(mac, {})
 
             power = int(st.get("power", 0))
             mode = st.get("mode", "stop")
@@ -865,7 +944,7 @@ class LMSPlugin:
             # Player-specific playlists
             player_pl = None
             if plsel:
-                player_pl = self.get_cached_playlists(mac)
+                player_pl = bundle.get("playlists", {}).get(mac, [])
 
             # Track Text
             if text in Devices:
@@ -961,7 +1040,7 @@ class LMSPlugin:
                     self.update_player_playlist_selector(plsel, player_pl, active_playlist_name=None)
 
             if favsel:
-                favorites = self.get_cached_favorites(mac)
+                favorites = bundle.get("favorites", [])
                 self.update_favorites_selector(favsel, favorites)
 
         self.any_active = any_active
@@ -991,7 +1070,7 @@ class LMSPlugin:
             return
 
         # Route on the stable Unit -> kind mapping (built from the immutable
-        # Device.Description/mac pairing in updateEverything) rather than on
+        # Device.Description/mac pairing in _processEverything) rather than on
         # Device.Name, which a Domoticz user can freely rename in the UI.
         kind = self.unit_kind.get(Unit)
         if kind is None:

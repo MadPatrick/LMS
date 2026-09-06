@@ -216,7 +216,16 @@ class LMSPlugin:
         return None
 
     def _load_device_icon(self):
-        _IMAGE = "LMS"
+        # The zip file on disk keeps its historical short name, but the
+        # icon's Base (in icons.txt, used as the Images dict key) must start
+        # with this plugin's key ("LyrionMusicServer") - Domoticz only loads
+        # a plugin's pre-existing custom icons into Images at startup when
+        # Base LIKE '<PluginKey>%'. The short "LMS" Base used before didn't
+        # satisfy that, so Images never contained it on restart and it was
+        # silently recreated (and re-logged as "created") every single time
+        # instead of found.
+        _ZIP_FILE = "LMS"
+        _IMAGE = "LyrionMusicServer"
         existing_image = next(
             (image for name, image in Images.items()
              if str(name).casefold() == _IMAGE.casefold()),
@@ -228,9 +237,9 @@ class LMSPlugin:
             return
 
         try:
-            Domoticz.Image(f"{_IMAGE}.zip").Create()
+            Domoticz.Image(f"{_ZIP_FILE}.zip").Create()
         except Exception as e:
-            self.error(f"Unable to load icon pack '{_IMAGE}.zip': {e}")
+            self.error(f"Unable to load icon pack '{_ZIP_FILE}.zip': {e}")
             return
         created_image = next(
             (image for name, image in Images.items()
@@ -241,7 +250,7 @@ class LMSPlugin:
             self.imageID = created_image.ID
             self.log("Icons created and loaded.")
         else:
-            self.error(f"Unable to load icon pack '{_IMAGE}.zip'")
+            self.error(f"Unable to load icon pack '{_ZIP_FILE}.zip'")
 
     def _apply_device_icon(self):
         if not self.imageID:

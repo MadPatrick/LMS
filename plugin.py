@@ -1,8 +1,8 @@
 """
-<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.2.3" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
+<plugin key="LyrionMusicServer" name="Lyrion Music Server" author="MadPatrick" version="2.3.0" wikilink="https://lyrion.org" externallink="https://github.com/MadPatrick/domoticz_Lyrion">
     <description>
         <h2>Lyrion Music Server</h2>
-        <p><strong>Version:</strong> 2.2.3</p>
+        <p><strong>Version:</strong> 2.3.0</p>
         <p>Automatically detects Lyrion Music Server players and creates a complete set of Domoticz controls for each player.</p>
         <h3>Features</h3>
         <ul>
@@ -18,6 +18,7 @@
     <params>
         <param field="Address" label="Server IP" width="200px" required="true" default="192.168.1.6">
             <description>
+                <h4 style="margin:4px 0 6px 0;">Connection</h4>
                 <br/>Plain IP/hostname connects over plain HTTP using the Port field below.
                 <br/>To connect over HTTPS (e.g. through a reverse proxy in front of LMS) enter a full URL instead, for example <i>https://lms.example.com:9443</i> - the Port field is then ignored.
             </description>
@@ -30,9 +31,9 @@
         </param>
         <param field="Password" label="Password" width="150px" password="true">
         </param>
-        <param field="Mode1" label="Active polling interval" width="100px" default="10">
+        <param field="ActivePollingInterval" label="Active polling interval" width="100px" default="10">
             <description>
-                <br/>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Polling</h4>
             </description>
             <options>
                 <option label="10 sec" value="10" default="true"/>
@@ -43,7 +44,7 @@
                 <option label="600 sec" value="600"/>
             </options>
         </param>
-        <param field="Mode5" label="Inactive polling interval" width="100px" default="600">
+        <param field="InactivePollingInterval" label="Inactive polling interval" width="100px" default="600">
             <options>
             <option label=" 1 min" value="60"/>
             <option label=" 5 min" value="300"/>
@@ -52,7 +53,7 @@
             <option label="60 min" value="3600"/>
         </options>
         </param>
-        <param field="Mode6" label="List refresh interval" width="100px" default="10">
+        <param field="ListRefreshInterval" label="List refresh interval" width="100px" default="10">
             <options>
             <option label="1 min" value="1"/>
             <option label="5 min" value="5"/>
@@ -62,14 +63,17 @@
             <option label="240 min" value="240"/>
         </options>
         </param>
-        <param field="Mode2" label="Max playlists to load" width="100px" default="5"/>
-        <param field="Mode3" label="Debug logging" width="100px" default="False">
-            <options>
-                <option label="Off" value="False" default="true"/>
-                <option label="On" value="True"/>
-            </options>
+        <param field="MaxPlaylists" label="Max playlists to load" width="100px" default="5"/>
+        <param field="MessageText" label="Message text" width="300px" default="Hello from Domoticz!">
+            <description>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Display</h4>
+            </description>
         </param>
-        <param field="Mode4" label="Message text" width="300px" default="Hello from Domoticz!" />
+        <param field="EnableDebug" type="boolean" label="Debug" default="false">
+            <description>
+                <h4 style="margin:14px 0 6px 0; border-top:1px solid #ccc; padding-top:8px;">Logging</h4>
+            </description>
+        </param>
     </params>
 </plugin>
 """
@@ -102,7 +106,7 @@ class LMSPlugin:
         self.debug = False
 
         # Display text settings
-        self.displayText = ""           # Mode4: line2
+        self.displayText = ""           # MessageText: line2
         self.subjectText = "Lyrion"     # line1
         self.displayDuration = 60
 
@@ -151,6 +155,25 @@ class LMSPlugin:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _read_migrated_parameter(self, field, legacy_field, default=""):
+        """Read a named setting, falling back to its former ModeX field.
+
+        Empty defaults on the new settings make existing Domoticz hardware
+        configurations continue to work until they are saved with the new
+        field names.
+        """
+        raw = Parameters.get(field, "")
+        if raw is None or str(raw).strip() == "":
+            raw = Parameters.get(legacy_field, "")
+        if raw is None or str(raw).strip() == "":
+            return default
+        return raw
+
+    def _read_migrated_boolean_parameter(self, field, legacy_field, default=False, extra_truthy=()):
+        raw = self._read_migrated_parameter(field, legacy_field, "true" if default else "false")
+        truthy = {"true", "1", "yes", "on"} | {v.lower() for v in extra_truthy}
+        return str(raw).strip().lower() in truthy
+
     def log(self, msg):
         Domoticz.Log(msg)
 
@@ -236,48 +259,48 @@ class LMSPlugin:
         self._load_device_icon()
         self._apply_device_icon()
 
-        # Poll interval (Mode1)
+        # Poll interval (ActivePollingInterval)
         try:
-            self.pollInterval = int(Parameters.get("Mode1", 30))
+            self.pollInterval = int(self._read_migrated_parameter("ActivePollingInterval", "Mode1", "30"))
         except (TypeError, ValueError):
-            self.log("Mode1 leeg of ongeldig, default 30s gebruikt")
+            self.log("ActivePollingInterval leeg of ongeldig, default 30s gebruikt")
             self.pollInterval = 30
 
-        # Offline interval (Mode5)
-        mode5_raw = Parameters.get("Mode5", "")
-        if not mode5_raw:
-            self.log("Mode5 is empty, fallback to 60s")
+        # Offline interval (InactivePollingInterval)
+        inactive_raw = str(self._read_migrated_parameter("InactivePollingInterval", "Mode5", ""))
+        if not inactive_raw:
+            self.log("InactivePollingInterval is empty, fallback to 60s")
             self.offlinePollInterval = 60
         else:
             try:
-                self.offlinePollInterval = int(mode5_raw)
+                self.offlinePollInterval = int(inactive_raw)
             except (TypeError, ValueError):
-                self.log("Mode5 invalid, fallback to 60s")
+                self.log("InactivePollingInterval invalid, fallback to 60s")
                 self.offlinePollInterval = 60
 
-        # List poll interval (Mode6) waarde is in minuten, intern omzetten naar seconden
+        # List poll interval (ListRefreshInterval) waarde is in minuten, intern omzetten naar seconden
         try:
-            self.listPollInterval = int(Parameters.get("Mode6", 10)) * 60
+            self.listPollInterval = int(self._read_migrated_parameter("ListRefreshInterval", "Mode6", "10")) * 60
         except (TypeError, ValueError):
             self.listPollInterval = 600
-            self.log("Mode6 invalid, fallback to 600 sec")
+            self.log("ListRefreshInterval invalid, fallback to 600 sec")
 
-        # Max playlists (Mode2)
+        # Max playlists (MaxPlaylists)
         try:
-            self.max_playlists = int(Parameters.get("Mode2", 50))
+            self.max_playlists = int(self._read_migrated_parameter("MaxPlaylists", "Mode2", "50"))
         except (TypeError, ValueError):
             self.max_playlists = 50
 
-        # Debug logging (Mode3)
-        self.debug = Parameters.get("Mode3", "False").lower() == "true"
+        # Debug logging (EnableDebug)
+        self.debug = self._read_migrated_boolean_parameter("EnableDebug", "Mode3", False)
         if self.debug:
             Domoticz.Debugging(1)
             self.log("Debug logging enabled")
         else:
             Domoticz.Debugging(0)
 
-        # Display text (Mode4)
-        self.displayText = Parameters.get("Mode4", "")
+        # Display text (MessageText)
+        self.displayText = str(self._read_migrated_parameter("MessageText", "Mode4", ""))
 
         self.log(
             f"Poll interval: Online : {self.pollInterval}s | "
@@ -1178,7 +1201,7 @@ class LMSPlugin:
             if self.displayText:
                 self.send_display_text(mac, self.displayText)
             else:
-                self.log("No display text configured in parameters (Mode4).")
+                self.log("No display text configured in parameters (MessageText).")
             dev.Update(nValue=0, sValue="0")
             return
 
